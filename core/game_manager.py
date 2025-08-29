@@ -270,8 +270,12 @@ class GameManager:
         self.performance_update_timer += self.dt
 
     def _handle_enhanced_collisions(self):
-        """Enhanced collision detection with visual effects."""
+        """Enhanced collision detection with all new enemy abilities."""
         player_bullets = self.player.weapon_system.get_bullets()
+
+        # Update player position for enemy AI
+        if self.wave_manager and self.player:
+            self.wave_manager.set_player_position(self.player.rect.centerx, self.player.rect.centery)
 
         # Bullet vs Enemy collisions
         for bullet in player_bullets[:]:
@@ -285,8 +289,13 @@ class GameManager:
 
                     # Apply bullet damage
                     damage_dealt = getattr(bullet, 'damage', 1)
-                    if enemy.take_damage(damage_dealt):
-                        # Enemy destroyed
+                    enemy_destroyed = enemy.take_damage(damage_dealt)
+
+                    if enemy_destroyed:
+                        # Handle special death effects
+                        self._handle_enemy_death_effects(enemy)
+
+                        # Score and rewards
                         base_score = getattr(enemy, 'score_value', 100)
                         final_score = self.score_manager.add_kill_score(base_score)
 
@@ -294,16 +303,48 @@ class GameManager:
                         if self.powerup_manager.try_spawn_powerup(enemy.int_x, enemy.int_y):
                             self.notification_manager.add_notification("Power-up spawned!", "powerup", 1.5)
 
-                        # Enhanced explosion effect
+                        # Enhanced explosion effect based on enemy type
+                        explosion_size = EXPLOSION_PARTICLE_COUNT + enemy.size // 3
                         self.player.particle_engine.create_explosion(
-                            enemy.int_x, enemy.int_y, EXPLOSION_PARTICLE_COUNT + 5
+                            enemy.int_x, enemy.int_y, explosion_size
                         )
 
-                        # Screen shake based on enemy size
+                        # Screen shake based on enemy size and type
                         distance = math.sqrt((enemy.int_x - self.screen_width//2)**2 +
                                            (enemy.int_y - self.screen_height//2)**2)
-                        self.screen_shake.add_explosion_shake(distance)
+                        shake_intensity = 10 + enemy.size // 2
+                        if hasattr(enemy, 'is_boss') and enemy.is_boss:
+                            shake_intensity *= 2
+                        self.screen_shake.add_explosion_shake(distance, shake_intensity)
+                    else:
+                        # Enemy damaged but not destroyed - smaller effect
+                        self.player.particle_engine.create_explosion(
+                            enemy.int_x, enemy.int_y, 3
+                        )
+                        self.screen_shake.add_shake(3, 0.1)
                     break
+
+        # Enemy Bullet vs Player collisions
+        for enemy in self.enemies:
+            if hasattr(enemy, 'bullets'):
+                for bullet in enemy.bullets[:]:
+                    if bullet.active and bullet.get_rect().colliderect(self.player.rect):
+                        bullet.active = False
+
+                        # Handle player being hit by enemy bullet
+                        if self.player.shield_active and self.player.shield_energy > 0:
+                            # Shield absorbs damage
+                            self.player.shield_energy -= bullet.damage * 10
+                            self.player.simulate_shield_hit()
+                            self.screen_shake.add_shake(8, 0.2)
+                            self.notification_manager.add_notification("Shield hit!", "warning")
+                        else:
+                            # Player takes damage
+                            if self.player.take_damage(bullet.damage * 15):  # Enemy bullets hurt more
+                                self._trigger_game_over()
+                            else:
+                                self.notification_manager.add_notification("Hull breach!", "warning")
+                                self.screen_shake.add_shake(15, 0.4)
 
         # Power-up collection
         collected_powerups = self.powerup_manager.check_collection(self.player.rect)
@@ -317,9 +358,13 @@ class GameManager:
         for enemy in self.enemies[:]:
             enemy_rect = enemy.get_rect()
             if player_rect.colliderect(enemy_rect):
+                # Handle special enemy effects on collision
+                self._handle_enemy_collision_effects(enemy)
+
                 if self.player.shield_active and self.player.shield_energy > 0:
                     # Shield absorbs damage
-                    self.player.shield_energy -= 25
+                    damage = 25 + enemy.size
+                    self.player.shield_energy -= damage
                     enemy.active = False
 
                     self.player.simulate_shield_hit()
@@ -328,16 +373,75 @@ class GameManager:
                     self.player.particle_engine.create_explosion(
                         enemy.int_x, enemy.int_y, 12
                     )
-                    self.notification_manager.add_notification("Shield absorbed hit!", "info")
+                    self.notification_manager.add_notification("Shield absorbed collision!", "info")
                 else:
-                    # Player takes damage
-                    if self.player.take_damage(34):  # Player died
+                    # Player takes damage based on enemy type
+                    base_damage = 34
+                    if hasattr(enemy, 'is_boss') and enemy.is_boss:
+                        base_damage *= 2
+                    elif enemy.size > 20:  # Large enemies
+                        base_damage = int(base_damage * 1.5)
+
+                    if self.player.take_damage(base_damage):  # Player died
                         self._trigger_game_over()
                     else:
-                        self.notification_manager.add_notification("Hull damage taken!", "warning")
+                        self.notification_manager.add_notification("Critical hull damage!", "warning")
 
                     enemy.active = False
                     self.screen_shake.add_shake(25, 0.6)
+
+        # Handle special enemy abilities affecting the player
+        self._handle_special_enemy_abilities()
+
+    def _handle_enemy_death_effects(self, enemy):
+        """Handle special effects when enemies are destroyed."""
+        # Handle splitter enemies
+        if hasattr(enemy, 'split_on_death') and enemy.split_on_death:
+            split_enemies = enemy.get_split_enemies()
+            if split_enemies:
+                self.enemies.extend(split_enemies)
+                self.wave_manager.enemies_alive.extend(split_enemies)
+                self.notification_manager.add_notification("Enemy split!", "warning", 2.0)
+
+        # Handle energy vampire death - restore some player energy
+        if hasattr(enemy, 'energy_drain') and enemy.energy_drain:
+            if self.player.shield_energy < self.player.max_shield_energy:
+                self.player.shield_energy = min(
+                    self.player.max_shield_energy,
+                    self.player.shield_energy + 20
+                )
+                self.notification_manager.add_notification("Energy restored!", "success", 1.5)
+
+    def _handle_enemy_collision_effects(self, enemy):
+        """Handle special effects when enemies collide with player."""
+        # Energy vampire drains player energy on contact
+        if hasattr(enemy, 'energy_drain') and enemy.energy_drain:
+            if self.player.shield_energy > 0:
+                drain_amount = min(30, self.player.shield_energy)
+                self.player.shield_energy -= drain_amount
+                self.notification_manager.add_notification("Energy drained!", "warning", 1.5)
+
+    def _handle_special_enemy_abilities(self):
+        """Handle ongoing special enemy abilities that affect the player."""
+        # Energy vampires drain energy over time when close
+        for enemy in self.enemies:
+            if (hasattr(enemy, 'energy_drain') and enemy.energy_drain and
+                enemy.enemy_type == "energy_vampire"):
+
+                # Calculate distance to player
+                distance = math.sqrt(
+                    (enemy.x - self.player.rect.centerx)**2 +
+                    (enemy.y - self.player.rect.centery)**2
+                )
+
+                # Drain energy if close enough
+                if distance < 150 and self.player.shield_energy > 0:
+                    drain_rate = 5 * self.dt  # 5 energy per second
+                    self.player.shield_energy = max(0, self.player.shield_energy - drain_rate)
+
+                    # Visual feedback
+                    if random.random() < 0.1:  # 10% chance per frame
+                        self.notification_manager.add_notification("Energy being drained!", "warning", 0.5)
 
     def _trigger_game_over(self):
         """Enhanced game over with final statistics."""
