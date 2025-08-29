@@ -8,7 +8,7 @@ from config.settings import *
 
 
 class Wave:
-    """Individual wave configuration with enhanced difficulty scaling."""
+    """Individual wave configuration with enhanced scaling."""
 
     def __init__(self, wave_number):
         """Initialize wave properties with enhanced scaling."""
@@ -87,7 +87,7 @@ class Wave:
 
 
 class WaveManager:
-    """Enhanced wave manager with special events and difficulty scaling."""
+    """Enhanced wave manager with time-based wave progression."""
 
     def __init__(self, screen_width, screen_height):
         """Initialize enhanced wave manager."""
@@ -99,6 +99,11 @@ class WaveManager:
         self.wave_break_timer = 0
         self.spawn_timer = 0
         self.enemies_alive = []
+
+        # Time-based wave system
+        self.wave_duration = 60.0  # 1 minute per wave
+        self.wave_timer = 0.0  # Tracks how long current wave has been active
+        self.wave_time_remaining = 60.0
 
         # Enhanced tracking
         self.special_event_timer = 0
@@ -121,12 +126,16 @@ class WaveManager:
         self.wave_warning_shown = False
         self.difficulty_ramp_timer = 0
 
+        # Reset wave timer for 1-minute duration
+        self.wave_timer = 0.0
+        self.wave_time_remaining = self.wave_duration
+
         # Clear special tracking
         self.event_enemies.clear()
         self.split_enemies_pending.clear()
 
     def update(self, dt, enemy_spawner, notification_manager):
-        """Enhanced wave system update."""
+        """Enhanced wave system update with time-based progression."""
         if not self.wave_active:
             # Wave break period
             self.wave_break_timer += dt
@@ -141,6 +150,18 @@ class WaveManager:
                 return
 
         if self.wave_active and self.current_wave:
+            # Update wave timer first
+            self.wave_timer += dt
+            self.wave_time_remaining = max(0, self.wave_duration - self.wave_timer)
+
+            # Check for time-based wave completion (1 minute timer)
+            if self.wave_timer >= self.wave_duration:
+                self._complete_wave_by_time(notification_manager)
+                return
+
+            # Show time warnings
+            self._show_time_warnings(notification_manager)
+
             # Update wave start timer
             if self.wave_start_timer > 0:
                 self.wave_start_timer -= dt
@@ -149,10 +170,9 @@ class WaveManager:
             if self.current_wave.is_special_event:
                 self._handle_special_event(dt, enemy_spawner, notification_manager)
 
-            # Regular enemy spawning
-            elif (self.current_wave.enemies_spawned < self.current_wave.enemies_to_spawn and
-                  self.wave_start_timer <= 0):
-                self._handle_regular_spawning(dt, enemy_spawner)
+            # Regular enemy spawning - continue spawning throughout the entire wave duration
+            elif self.wave_start_timer <= 0:
+                self._handle_continuous_spawning(dt, enemy_spawner)
 
             # Handle pending split enemies
             self._handle_split_enemies()
@@ -163,10 +183,64 @@ class WaveManager:
             # Update all enemies with enhanced parameters
             self._update_enemies(dt)
 
-            # Check wave completion
-            if (self.current_wave.enemies_spawned >= self.current_wave.enemies_to_spawn and
-                len(self.enemies_alive) == 0 and len(self.event_enemies) == 0):
-                self._complete_wave(notification_manager)
+    def _handle_continuous_spawning(self, dt, enemy_spawner):
+        """Handle continuous enemy spawning throughout the wave duration."""
+        self.spawn_timer += dt
+        spawn_interval = 1.0 / self.current_wave.spawn_rate
+
+        if self.spawn_timer >= spawn_interval:
+            self.spawn_timer = 0
+
+            # Continue spawning enemies throughout the entire wave duration
+            new_enemies = enemy_spawner.spawn_wave_enemy(
+                self.current_wave.enemy_speed_multiplier,
+                self.current_wave.enemy_health_multiplier,
+                self.current_wave.is_boss_wave,
+                self.current_wave_number
+            )
+
+            if new_enemies:
+                self.enemies_alive.extend(new_enemies)
+                self.current_wave.enemies_spawned += len(new_enemies)
+
+    def _show_time_warnings(self, notification_manager):
+        """Show countdown warnings for remaining wave time."""
+        time_remaining = self.wave_time_remaining
+
+        # Show warnings at specific time intervals
+        if abs(time_remaining - 30.0) < 0.1:  # 30 seconds remaining
+            notification_manager.add_notification("⏰ 30 seconds remaining!", "warning", 2.0)
+        elif abs(time_remaining - 10.0) < 0.1:  # 10 seconds remaining
+            notification_manager.add_notification("⏰ 10 seconds left!", "warning", 2.0)
+        elif abs(time_remaining - 5.0) < 0.1:  # 5 seconds remaining
+            notification_manager.add_notification("⏰ 5 seconds!", "warning", 1.5)
+
+    def _complete_wave_by_time(self, notification_manager):
+        """Complete wave when 1-minute timer expires."""
+        self.wave_active = False
+        self.current_wave_number += 1
+
+        # Clear all remaining enemies when wave ends
+        self.enemies_alive.clear()
+        self.event_enemies.clear()
+
+        # Time-based completion notifications
+        notification_manager.add_notification("⏰ Wave Complete - Time's Up!", "success", 3.0)
+
+        if self.current_wave.is_boss_wave:
+            notification_manager.add_notification("🏆 Boss Wave Survived!", "achievement", 4.0)
+        elif self.current_wave.is_special_event:
+            notification_manager.add_notification("⚡ Special Event Survived!", "success", 3.0)
+        else:
+            notification_manager.add_notification(f"✅ Wave {self.current_wave_number - 1} Survived!", "success", 2.0)
+
+        # Difficulty milestone notifications
+        if self.current_wave_number == 5:
+            notification_manager.add_notification("🔥 Elite Enemies Unlocked!", "info", 3.0)
+        elif self.current_wave_number == 10:
+            notification_manager.add_notification("💀 Destroyer Class Detected!", "warning", 3.0)
+        elif self.current_wave_number % 10 == 0:
+            notification_manager.add_notification(f"🌟 Wave {self.current_wave_number - 1} Milestone!", "achievement", 3.0)
 
     def _show_wave_preview(self, notification_manager, enemy_spawner):
         """Show preview of incoming wave with enemy types."""
@@ -343,7 +417,8 @@ class WaveManager:
                 'speed': round(self.current_wave.enemy_speed_multiplier, 2),
                 'health': round(self.current_wave.enemy_health_multiplier, 2),
                 'spawn_rate': round(self.current_wave.spawn_rate, 2)
-            }
+            },
+            'wave_time_remaining': round(self.wave_time_remaining, 1)
         }
 
     def draw_wave_transition(self, surface, screen_width, screen_height):

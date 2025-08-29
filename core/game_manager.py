@@ -231,9 +231,16 @@ class GameManager:
             keys = pygame.key.get_pressed()
             if keys[pygame.K_SPACE] and self.player:
                 if self.player.weapon_system.try_shoot(self.dt):
-                    # Add slight screen shake for shooting feedback
-                    if self.screen_shake:
-                        self.screen_shake.add_shake(2, 0.1)
+                    # Enhanced weapon-specific screen shake
+                    weapon_status = self.player.weapon_system.get_weapon_status()
+                    if "TRIPLE SHOT" in weapon_status:
+                        self.screen_shake.add_weapon_fire_shake("triple_shot")
+                    elif "RAPID FIRE" in weapon_status:
+                        self.screen_shake.add_weapon_fire_shake("rapid_fire")
+                    elif "DAMAGE BOOST" in weapon_status:
+                        self.screen_shake.add_weapon_fire_shake("heavy")
+                    else:
+                        self.screen_shake.add_weapon_fire_shake("normal")
 
             # Update wave system
             if self.wave_manager and self.enemy_spawner and self.notification_manager:
@@ -552,9 +559,10 @@ class GameManager:
             return
 
         # Enhanced HUD with animations
+        wave_info = self.wave_manager.get_wave_info()
         self.enhanced_hud.draw_enhanced_bars(
             self.screen, self.player,
-            self.score_manager.score, self.wave_manager.current_wave_number
+            self.score_manager.score, self.wave_manager.current_wave_number, wave_info
         )
 
         # Weapon status indicators - positioned below health/shield bars

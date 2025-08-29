@@ -190,8 +190,8 @@ class EnhancedHUD:
         self.shield_pulse_timer += dt
         self.score_pulse_timer += dt
 
-    def draw_enhanced_bars(self, surface, player, score, wave_number):
-        """Draw enhanced health/shield bars with better positioning."""
+    def draw_enhanced_bars(self, surface, player, score, wave_number, wave_info=None):
+        """Draw enhanced health/shield bars with better positioning and wave timer."""
         # Health bar - bottom left
         health_ratio = player.health / player.max_health
         health_color = self.success_color if health_ratio > 0.6 else (
@@ -251,21 +251,57 @@ class EnhancedHUD:
         label_rect = score_label.get_rect(topright=(self.screen_width - self.margin, self.margin - 25))
         surface.blit(score_label, label_rect)
 
-        # Wave display - top left with modern styling
+        # Enhanced Wave display with timer - top left
         wave_text = f"WAVE {wave_number}"
         wave_surface = self.medium_font.render(wave_text, True, self.accent_color)
 
+        # Calculate timer display
+        timer_text = ""
+        timer_color = self.primary_color
+        if wave_info and 'wave_time_remaining' in wave_info:
+            time_remaining = wave_info['wave_time_remaining']
+            minutes = int(time_remaining // 60)
+            seconds = int(time_remaining % 60)
+            timer_text = f"{minutes:01d}:{seconds:02d}"
+
+            # Color based on remaining time
+            if time_remaining <= 10:
+                timer_color = self.warning_color
+            elif time_remaining <= 30:
+                timer_color = (255, 255, 100)  # Yellow warning
+            else:
+                timer_color = self.success_color
+
+        # Create combined wave info background
+        timer_surface = self.small_font.render(timer_text, True, timer_color) if timer_text else None
+
+        # Calculate total width needed
+        total_width = wave_surface.get_width()
+        if timer_surface:
+            total_width = max(total_width, timer_surface.get_width())
+
+        total_height = wave_surface.get_height()
+        if timer_surface:
+            total_height += timer_surface.get_height() + 5
+
         # Wave background
-        wave_bg = pygame.Surface((wave_surface.get_width() + 20, wave_surface.get_height() + 10), pygame.SRCALPHA)
+        wave_bg = pygame.Surface((total_width + 20, total_height + 15), pygame.SRCALPHA)
         wave_bg.fill((0, 50, 100, 80))
         wave_bg_rect = wave_bg.get_rect(topleft=(self.margin - 10, self.margin - 5))
         surface.blit(wave_bg, wave_bg_rect)
 
-        # Wave border
-        pygame.draw.rect(surface, self.accent_color, wave_bg_rect, width=2, border_radius=5)
+        # Wave border with color based on timer
+        border_color = timer_color if time_remaining <= 10 else self.accent_color
+        pygame.draw.rect(surface, border_color, wave_bg_rect, width=2, border_radius=5)
 
+        # Draw wave text
         wave_rect = wave_surface.get_rect(topleft=(self.margin, self.margin))
         surface.blit(wave_surface, wave_rect)
+
+        # Draw timer text below wave
+        if timer_surface:
+            timer_rect = timer_surface.get_rect(topleft=(self.margin, self.margin + wave_surface.get_height() + 5))
+            surface.blit(timer_surface, timer_rect)
 
     def _draw_animated_bar(self, surface, x, y, ratio, color, label):
         """Draw an animated progress bar with modern styling."""

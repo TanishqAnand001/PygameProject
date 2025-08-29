@@ -22,7 +22,7 @@ class StartScreen:
         self.particle_timer = 0
         self.background_scroll = 0
 
-        # Fonts - using modern built-in fonts
+        # Fonts - using modern built-in fontsdddddd
         self.title_font = pygame.font.Font(None, 120)
         self.subtitle_font = pygame.font.Font(None, 48)
         self.menu_font = pygame.font.Font(None, 42)
